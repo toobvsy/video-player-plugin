@@ -1,16 +1,16 @@
 name: Fabriquer l'installateur Mac
 
 on:
-  workflow_dispatch:        # permet de lancer à la main avec un bouton
+  workflow_dispatch:
   push:
-    tags: ["v*"]            # ou automatiquement quand on crée une version (v0.1.0, ...)
+    tags: ["v*"]
 
 permissions:
   contents: write
 
 jobs:
   build:
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - name: Récupérer le code
         uses: actions/checkout@v4
@@ -32,7 +32,6 @@ jobs:
           cp -R "$VST3" payload/Library/Audio/Plug-Ins/VST3/
           [ -d "$AU" ] && cp -R "$AU" payload/Library/Audio/Plug-Ins/Components/ || true
 
-          # Signature "ad hoc" (sans compte développeur Apple)
           codesign --force --deep -s - payload/Library/Audio/Plug-Ins/VST3/*.vst3
           [ -d payload/Library/Audio/Plug-Ins/Components/"Video Player.component" ] && \
             codesign --force --deep -s - payload/Library/Audio/Plug-Ins/Components/*.component || true
