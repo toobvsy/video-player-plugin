@@ -6,6 +6,14 @@ namespace
     constexpr int kStripHeight = 10;    // poignée quand la barre est masquée
     constexpr int kSeekHeight  = 10;    // ligne de progression en bas
 
+    constexpr int kMinWidth  = 400;
+    constexpr int kMinHeight = 320;
+    constexpr int kMaxWidth  = 2200;
+    constexpr int kMaxHeight = 1400;
+
+    constexpr int kNumSpeeds = 5;
+    constexpr double kSpeeds[kNumSpeeds] = { 0.5, 0.75, 1.0, 1.5, 2.0 };
+
     const char* const kYouTubeHome = "https://www.youtube.com/";
 
     // YouTube sert la bonne version du site à un navigateur "classique"
@@ -58,6 +66,12 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
     lnf.refreshColours();
     setLookAndFeel (&lnf);
 
+    // Préférences mémorisées dans le projet
+    loopEnabled = processor.getSetting ("loop") == "1";
+    fillMode    = processor.getSetting ("fill") == "1";
+    cleanMode   = processor.getSetting ("clean") == "1";
+    playSpeed   = juce::jlimit (0.25, 4.0, processor.getSetting ("speed", "1").getDoubleValue());
+
     // --- Onglets ---
     tabLocal.setButtonText (fr ("Vidéo"));
     tabYouTube.setButtonText ("YouTube");
@@ -77,7 +91,9 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
 
     collapseButton.onClick = [this] { setBarVisible (false); };
     expandButton.onClick   = [this] { setBarVisible (true); };
+    moreButton.onClick     = [this] { showMoreMenu(); };
     addAndMakeVisible (collapseButton);
+    addAndMakeVisible (moreButton);
     addChildComponent (expandButton);
 
     // --- Onglet vidéo locale ---
@@ -99,7 +115,7 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
         if (video.isPlaying())
             video.stop();       // "stop" = pause dans JUCE
         else
-            video.play();
+            playVideo();
     };
     addAndMakeVisible (playButton);
 
@@ -158,10 +174,12 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
 
     applyTheme();
 
-    // --- Fenêtre redimensionnable dans FL Studio ---
+    // --- Fenêtre redimensionnable dans FL Studio (taille mémorisée dans le projet) ---
     setResizable (true, true);
-    setResizeLimits (440, 320, 2200, 1400);
-    setSize (800, 492);             // vidéo 16:9 de 800 x 450 + barre + ligne de progression
+    setResizeLimits (kMinWidth, kMinHeight, kMaxWidth, kMaxHeight);
+
+    setSize (juce::jlimit (kMinWidth,  kMaxWidth,  processor.getSetting ("width",  "800").getIntValue()),
+             juce::jlimit (kMinHeight, kMaxHeight, processor.getSetting ("height", "494").getIntValue()));
 
     // Recharge la dernière vidéo si le projet en avait une (sans la lancer toute seule)
     const juce::String savedPath = processor.getVideoPath();
@@ -179,6 +197,9 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
 
 VideoPlayerEditor::~VideoPlayerEditor()
 {
+    if (cursorHidden)
+        NativeTweaks::setCursorHidden (false);
+
     if (saveCountdown > 0)
         Theme::save();
 
@@ -257,12 +278,14 @@ void VideoPlayerEditor::resized()
 
         auto row = barBounds.reduced (6, 0);
 
-        tabLocal.setBounds (row.removeFromLeft (62));
-        tabYouTube.setBounds (row.removeFromLeft (80));
-        tabSettings.setBounds (row.removeFromLeft (78));
+        tabLocal.setBounds (row.removeFromLeft (54));
+        tabYouTube.setBounds (row.removeFromLeft (70));
+        tabSettings.setBounds (row.removeFromLeft (70));
         row.removeFromLeft (8);
 
         collapseButton.setBounds (row.removeFromRight (26).withSizeKeepingCentre (26, 26));
+        row.removeFromRight (2);
+        moreButton.setBounds (row.removeFromRight (26).withSizeKeepingCentre (26, 26));
         row.removeFromRight (6);
 
         auto inner = row.reduced (0, 4);
@@ -310,6 +333,13 @@ void VideoPlayerEditor::resized()
 
     panel.removeFromLeft (14);
     selector.setBounds (panel);
+
+    // Mémorise la taille de la fenêtre dans le projet
+    if (getWidth() > 0 && getHeight() > 0)
+    {
+        processor.setSetting ("width",  juce::String (getWidth()));
+        processor.setSetting ("height", juce::String (getHeight()));
+    }
 }
 
 //==============================================================================
@@ -328,6 +358,8 @@ void VideoPlayerEditor::showTab (int tab)
     {
         if (videoLoaded)
             video.stop();           // on met la vidéo locale en pause
+
+        wasPlaying = false;
 
         ensureBrowser();
         browser->setVisible (true);
@@ -354,11 +386,27 @@ void VideoPlayerEditor::showTab (int tab)
 
 void VideoPlayerEditor::setBarVisible (bool shouldShow)
 {
+    // On garde la même taille pour la vidéo : la fenêtre rétrécit / grandit de la hauteur de la barre
+    const int before = chromeHeight();
     barVisible = shouldShow;
+    const int after = chromeHeight();
 
     updateControlsVisibility();
+
+    if (before != after)
+        setSize (getWidth(), juce::jlimit (kMinHeight / 2, kMaxHeight, getHeight() + (after - before)));
+
     resized();
     repaint();
+}
+
+int VideoPlayerEditor::chromeHeight() const
+{
+    // Hauteur de tout ce qui n'est pas la vidéo (barre du haut + ligne de progression)
+    if (! barVisible)
+        return kStripHeight;
+
+    return kBarHeight + ((currentTab == 0 && videoLoaded) ? kSeekHeight : 0);
 }
 
 void VideoPlayerEditor::updateControlsVisibility()
@@ -372,6 +420,7 @@ void VideoPlayerEditor::updateControlsVisibility()
     tabYouTube.setVisible (bar);
     tabSettings.setVisible (bar);
     collapseButton.setVisible (bar);
+    moreButton.setVisible (bar);
     expandButton.setVisible (! bar);
 
     backButton.setVisible (bar && yt);
@@ -428,6 +477,186 @@ void VideoPlayerEditor::submitSearch()
         url = "https://www.youtube.com/results?search_query=" + juce::URL::addEscapeChars (text, true);
 
     browser->goToURL (url);
+}
+
+//==============================================================================
+// Menu "..." : format de la fenêtre, cadrage, vitesse, boucle, mode propre, vidéos récentes
+void VideoPlayerEditor::showMoreMenu()
+{
+    juce::PopupMenu formats;
+    formats.addItem (1, fr ("16:9  (horizontal)"));
+    formats.addItem (2, fr ("9:16  (vertical)"));
+    formats.addItem (3, fr ("1:1  (carré)"));
+    formats.addItem (4, fr ("4:5  (portrait)"));
+    formats.addSeparator();
+    formats.addItem (5, fr ("Comme la vidéo"), videoLoaded);
+
+    juce::PopupMenu menu;
+    menu.addSubMenu (fr ("Format de la fenêtre"), formats);
+
+    juce::StringArray recentFiles;
+
+    if (currentTab == 0)
+    {
+        juce::PopupMenu framing;
+        framing.addItem (10, fr ("Ajuster (bandes noires si besoin)"), true, ! fillMode);
+        framing.addItem (11, fr ("Remplir (recadrer)"), true, fillMode);
+        menu.addSubMenu ("Cadrage", framing);
+
+        const juce::String speedLabels[kNumSpeeds] = { fr ("0,5×"), fr ("0,75×"), fr ("1×  (normal)"),
+                                                       fr ("1,5×"), fr ("2×") };
+        juce::PopupMenu speeds;
+
+        for (int i = 0; i < kNumSpeeds; ++i)
+            speeds.addItem (20 + i, speedLabels[i], true, std::abs (playSpeed - kSpeeds[i]) < 0.001);
+
+        menu.addSubMenu ("Vitesse", speeds);
+
+        menu.addItem (30, "Boucle", true, loopEnabled);
+        menu.addItem (31, fr ("Mode propre  (masquer le curseur)"), true, cleanMode);
+        menu.addSeparator();
+
+        for (auto& path : Recents::load())
+            if (juce::File (path).existsAsFile())
+                recentFiles.add (path);
+
+        juce::PopupMenu recents;
+
+        for (int i = 0; i < recentFiles.size(); ++i)
+            recents.addItem (100 + i, juce::File (recentFiles[i]).getFileName());
+
+        if (recentFiles.isEmpty())
+        {
+            recents.addItem (999, fr ("(aucune pour l'instant)"), false);
+        }
+        else
+        {
+            recents.addSeparator();
+            recents.addItem (200, fr ("Effacer la liste"));
+        }
+
+        menu.addSubMenu (fr ("Vidéos récentes"), recents);
+    }
+
+    juce::Component::SafePointer<VideoPlayerEditor> safeThis (this);
+
+    menu.showMenuAsync (juce::PopupMenu::Options().withTargetComponent (&moreButton),
+                        [safeThis, recentFiles] (int result)
+                        {
+                            if (safeThis != nullptr && result != 0)
+                                safeThis->handleMenuResult (result, recentFiles);
+                        });
+}
+
+void VideoPlayerEditor::handleMenuResult (int result, const juce::StringArray& recentFiles)
+{
+    switch (result)
+    {
+        case 1:  applyWindowFormat (800, 450); return;     // 16:9
+        case 2:  applyWindowFormat (405, 720); return;     // 9:16
+        case 3:  applyWindowFormat (600, 600); return;     // 1:1
+        case 4:  applyWindowFormat (520, 650); return;     // 4:5
+
+        case 5:     // même proportions que la vidéo
+        {
+            const auto native = video.getVideoNativeSize();
+
+            if (native.getWidth() > 0 && native.getHeight() > 0)
+            {
+                const double scale = juce::jmin (800.0 / native.getWidth(), 720.0 / native.getHeight());
+                int w = (int) std::round (native.getWidth() * scale);
+                int h = (int) std::round (native.getHeight() * scale);
+
+                if (w < kMinWidth)
+                {
+                    h = (int) std::round (h * (double) kMinWidth / (double) w);
+                    w = kMinWidth;
+                }
+
+                applyWindowFormat (w, h);
+            }
+            return;
+        }
+
+        case 10: setFillMode (false); return;
+        case 11: setFillMode (true);  return;
+
+        case 30:
+            loopEnabled = ! loopEnabled;
+            processor.setSetting ("loop", loopEnabled ? "1" : "0");
+            return;
+
+        case 31:
+            cleanMode = ! cleanMode;
+            processor.setSetting ("clean", cleanMode ? "1" : "0");
+            return;
+
+        case 200:
+            Recents::clear();
+            return;
+
+        default:
+            break;
+    }
+
+    if (result >= 20 && result < 20 + kNumSpeeds)
+    {
+        setPlaybackSpeed (kSpeeds[result - 20]);
+    }
+    else if (result >= 100 && result < 100 + recentFiles.size())
+    {
+        loadVideo (juce::File (recentFiles[result - 100]), true);
+    }
+}
+
+void VideoPlayerEditor::applyWindowFormat (int contentWidth, int contentHeight)
+{
+    // La taille donnée est celle de la zone vidéo : on y ajoute la barre et la ligne de progression
+    setSize (juce::jlimit (kMinWidth, kMaxWidth, contentWidth),
+             juce::jlimit (kMinHeight, kMaxHeight, contentHeight + chromeHeight()));
+}
+
+//==============================================================================
+void VideoPlayerEditor::playVideo()
+{
+    video.play();
+
+    // Sur Mac, "play" remet la vitesse à 1× : on la réapplique
+    if (std::abs (playSpeed - 1.0) > 0.001)
+        video.setPlaySpeed (playSpeed);
+}
+
+void VideoPlayerEditor::setPlaybackSpeed (double newSpeed)
+{
+    playSpeed = newSpeed;
+    processor.setSetting ("speed", juce::String (playSpeed));
+
+    // Seulement si la vidéo joue : changer la vitesse d'une vidéo en pause la relancerait
+    if (videoLoaded && video.isPlaying())
+        video.setPlaySpeed (playSpeed);
+}
+
+void VideoPlayerEditor::setFillMode (bool shouldFill)
+{
+    fillMode = shouldFill;
+    processor.setSetting ("fill", fillMode ? "1" : "0");
+    NativeTweaks::setVideoFillsFrame (video, fillMode);
+}
+
+void VideoPlayerEditor::updateCursorHiding()
+{
+    // Mode propre : le curseur disparaît tant qu'il est au-dessus de la vidéo
+    const bool wantHidden = cleanMode && videoLoaded && currentTab == 0 && video.isShowing()
+                            && ! fileDialogOpen
+                            && juce::Component::getCurrentlyModalComponent() == nullptr   // pas pendant un menu
+                            && juce::Process::isForegroundProcess()
+                            && video.getScreenBounds().contains (juce::Desktop::getMousePosition());
+
+    if (wantHidden != cursorHidden)
+    {
+        cursorHidden = wantHidden;
+        NativeTweaks::setCursorHidden (wantHidden);
+    }
 }
 
 //==============================================================================
@@ -494,19 +723,27 @@ void VideoPlayerEditor::openFileDialog()
     // SafePointer : évite un plantage si la fenêtre est fermée pendant que le sélecteur est ouvert
     juce::Component::SafePointer<VideoPlayerEditor> safeThis (this);
 
+    fileDialogOpen = true;
+
     chooser->launchAsync (juce::FileBrowserComponent::openMode
                               | juce::FileBrowserComponent::canSelectFiles,
                           [safeThis] (const juce::FileChooser& fc)
                           {
+                              if (safeThis == nullptr)
+                                  return;
+
+                              safeThis->fileDialogOpen = false;
+
                               auto file = fc.getResult();
-                              if (safeThis != nullptr && file.existsAsFile())
+                              if (file.existsAsFile())
                                   safeThis->loadVideo (file, true);
                           });
 }
 
-void VideoPlayerEditor::loadVideo (const juce::File& file, bool autoPlay)
+void VideoPlayerEditor::loadVideo (const juce::File& file, bool userInitiated)
 {
     auto result = video.load (file);
+    wasPlaying = false;
 
     if (result.wasOk())
     {
@@ -514,10 +751,14 @@ void VideoPlayerEditor::loadVideo (const juce::File& file, bool autoPlay)
         videoLoaded = true;
         processor.setVideoPath (file.getFullPathName());
 
+        if (userInitiated)
+            Recents::add (file.getFullPathName());
+
+        NativeTweaks::setVideoFillsFrame (video, fillMode);
         video.setVisible (currentTab == 0);
 
-        if (autoPlay)
-            video.play();
+        if (userInitiated)
+            playVideo();
     }
     else
     {
@@ -558,7 +799,28 @@ void VideoPlayerEditor::timerCallback()
     if (saveCountdown > 0 && --saveCountdown == 0)
         Theme::save();
 
-    if (currentTab != 0 || ! videoLoaded)
+    updateCursorHiding();
+
+    if (! videoLoaded || currentTab == 1)
+        return;
+
+    const bool playing = video.isPlaying();
+
+    // Boucle : la vidéo vient de s'arrêter tout près de la fin, on repart du début
+    if (loopEnabled && wasPlaying && ! playing)
+    {
+        const double duration = video.getVideoDuration();
+
+        if (duration > 0.0 && video.getPlayPosition() >= duration - 0.35)
+        {
+            video.setPlayPosition (0.0);
+            playVideo();
+        }
+    }
+
+    wasPlaying = playing;
+
+    if (currentTab != 0)
         return;
 
     playButton.setIcon (video.isPlaying() ? IconButton::Icon::pause : IconButton::Icon::play);

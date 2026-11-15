@@ -134,6 +134,13 @@ public:
         setColour (juce::Slider::textBoxTextColourId,          Theme::text());
         setColour (juce::Slider::textBoxBackgroundColourId,    Theme::panel());
         setColour (juce::Slider::textBoxOutlineColourId,       juce::Colours::transparentBlack);
+
+        // Menu déroulant (bouton "...")
+        setColour (juce::PopupMenu::backgroundColourId,             Theme::panel());
+        setColour (juce::PopupMenu::textColourId,                   Theme::text());
+        setColour (juce::PopupMenu::headerTextColourId,             Theme::textDim());
+        setColour (juce::PopupMenu::highlightedBackgroundColourId,  Theme::panelHi());
+        setColour (juce::PopupMenu::highlightedTextColourId,        Theme::text());
     }
 
     // Onglets (boutons à bascule) : pas de fond, juste un trait sous l'onglet actif.
@@ -182,7 +189,7 @@ public:
 class IconButton : public juce::Button
 {
 public:
-    enum class Icon { back, play, pause, collapse, expand };
+    enum class Icon { back, play, pause, collapse, expand, more };
 
     explicit IconButton (Icon i) : juce::Button (""), icon (i)
     {
@@ -261,6 +268,11 @@ public:
             case Icon::pause:
                 g.fillRoundedRectangle (c.x - s * 0.85f, c.y - s, s * 0.6f, s * 2.0f, 1.5f);
                 g.fillRoundedRectangle (c.x + s * 0.25f, c.y - s, s * 0.6f, s * 2.0f, 1.5f);
+                break;
+
+            case Icon::more:            // trois points
+                for (int i = -1; i <= 1; ++i)
+                    g.fillEllipse (c.x + (float) i * s * 0.9f - 1.7f, c.y - 1.7f, 3.4f, 3.4f);
                 break;
 
             case Icon::expand:

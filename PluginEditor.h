@@ -2,6 +2,8 @@
 
 #include "PluginProcessor.h"
 #include "Theme.h"
+#include "Recents.h"
+#include "NativeTweaks.h"
 #include <juce_video/juce_video.h>
 #include <juce_gui_extra/juce_gui_extra.h>
 
@@ -50,7 +52,21 @@ private:
     void ensureBrowser();
     void submitSearch();
     void openFileDialog();
-    void loadVideo (const juce::File& file, bool autoPlay);
+
+    // userInitiated = true quand l'utilisateur choisit la vidéo (lecture auto + ajout aux récents)
+    void loadVideo (const juce::File& file, bool userInitiated);
+
+    // Lecture
+    void playVideo();
+    void setPlaybackSpeed (double newSpeed);
+    void setFillMode (bool shouldFill);
+    void updateCursorHiding();
+
+    // Menu "..." et taille de la fenêtre
+    void showMoreMenu();
+    void handleMenuResult (int result, const juce::StringArray& recentFiles);
+    int chromeHeight() const;
+    void applyWindowFormat (int contentWidth, int contentHeight);
 
     // Couleurs
     juce::Colour roleColour (int role) const;
@@ -66,12 +82,23 @@ private:
     bool barVisible = true;
     juce::String errorMessage;
 
+    // Préférences (mémorisées dans le projet)
+    bool loopEnabled = false;
+    bool fillMode = false;
+    bool cleanMode = false;
+    double playSpeed = 1.0;
+
+    bool wasPlaying = false;        // pour repérer la fin de la vidéo (boucle)
+    bool cursorHidden = false;
+    bool fileDialogOpen = false;
+
     juce::Rectangle<int> barBounds, contentArea, presetsHeaderBounds;
 
     // Barre du haut
     juce::TextButton tabLocal, tabYouTube, tabSettings;
     IconButton collapseButton { IconButton::Icon::collapse };   // masque la barre
     IconButton expandButton   { IconButton::Icon::expand };     // la ré-affiche
+    IconButton moreButton     { IconButton::Icon::more };       // menu : format, vitesse, boucle...
 
     // Onglet "vidéo locale"
     juce::VideoComponent video { false };   // false = pas de contrôles natifs, on fait les nôtres

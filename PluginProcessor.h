@@ -46,11 +46,16 @@ public:
     int getCurrentTab() const;       // 0 = vidéo locale, 1 = YouTube
     void setCurrentTab (int tab);
 
+    // Réglages divers mémorisés dans le projet (taille de la fenêtre, boucle, vitesse...)
+    juce::String getSetting (const juce::String& key, const juce::String& defaultValue = {}) const;
+    void setSetting (const juce::String& key, const juce::String& value);
+
 private:
     mutable juce::CriticalSection stateLock;
     juce::String videoPath;
     juce::String youtubeUrl;
     int currentTab = 0;
+    juce::StringPairArray settings;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (VideoPlayerProcessor)
 };

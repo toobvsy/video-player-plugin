@@ -64,6 +64,18 @@ void VideoPlayerProcessor::setCurrentTab (int tab)
     currentTab = tab;
 }
 
+juce::String VideoPlayerProcessor::getSetting (const juce::String& key, const juce::String& defaultValue) const
+{
+    const juce::ScopedLock sl (stateLock);
+    return settings.getValue (key, defaultValue);
+}
+
+void VideoPlayerProcessor::setSetting (const juce::String& key, const juce::String& value)
+{
+    const juce::ScopedLock sl (stateLock);
+    settings.set (key, value);
+}
+
 //==============================================================================
 void VideoPlayerProcessor::getStateInformation (juce::MemoryBlock& destData)
 {
@@ -71,6 +83,10 @@ void VideoPlayerProcessor::getStateInformation (juce::MemoryBlock& destData)
 
     {
         const juce::ScopedLock sl (stateLock);
+
+        for (auto& key : settings.getAllKeys())
+            xml.setAttribute (key, settings[key]);
+
         xml.setAttribute ("videoPath", videoPath);
         xml.setAttribute ("youtubeUrl", youtubeUrl);
         xml.setAttribute ("tab", currentTab);
@@ -86,9 +102,13 @@ void VideoPlayerProcessor::setStateInformation (const void* data, int sizeInByte
         if (xml->hasTagName ("VideoPlayerState"))
         {
             const juce::ScopedLock sl (stateLock);
+
             videoPath  = xml->getStringAttribute ("videoPath");
             youtubeUrl = xml->getStringAttribute ("youtubeUrl");
             currentTab = xml->getIntAttribute ("tab", 0);
+
+            for (int i = 0; i < xml->getNumAttributes(); ++i)
+                settings.set (xml->getAttributeName (i), xml->getAttributeValue (i));
         }
         return;
     }

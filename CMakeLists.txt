@@ -1,11 +1,16 @@
 cmake_minimum_required(VERSION 3.22)
 
-project(VideoPlayerPlugin VERSION 0.2.0)
+project(VideoPlayerPlugin VERSION 0.3.0)
 
 # Compile pour Apple Silicon ET Intel (FL Studio Mac tourne en natif sur les deux)
 set(CMAKE_OSX_ARCHITECTURES "arm64;x86_64" CACHE STRING "" FORCE)
 set(CMAKE_OSX_DEPLOYMENT_TARGET "11.0" CACHE STRING "" FORCE)
 set(CMAKE_CXX_STANDARD 17)
+
+# Nécessaire pour le petit fichier spécifique Mac (NativeTweaks.mm)
+if(APPLE)
+    enable_language(OBJCXX)
+endif()
 
 # Télécharge JUCE automatiquement (nécessite Internet au premier build)
 include(FetchContent)
@@ -36,7 +41,10 @@ target_sources(VideoPlayerPlugin PRIVATE
     PluginProcessor.h
     PluginEditor.cpp
     PluginEditor.h
-    Theme.h)
+    Theme.h
+    Recents.h
+    NativeTweaks.h
+    NativeTweaks.mm)
 
 target_compile_definitions(VideoPlayerPlugin PUBLIC
     JUCE_WEB_BROWSER=1
