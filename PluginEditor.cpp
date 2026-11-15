@@ -53,13 +53,17 @@ void YouTubeBrowser::newWindowAttemptingToLoad (const juce::String& newURL)
 VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
     : AudioProcessorEditor (&p), processor (p)
 {
+    // Récupère les couleurs choisies (partagées entre tous les projets)
+    Theme::load();
+    lnf.refreshColours();
     setLookAndFeel (&lnf);
 
     // --- Onglets ---
     tabLocal.setButtonText (fr ("Vidéo"));
     tabYouTube.setButtonText ("YouTube");
+    tabSettings.setButtonText ("Couleurs");
 
-    for (auto* b : { &tabLocal, &tabYouTube })
+    for (auto* b : { &tabLocal, &tabYouTube, &tabSettings })
     {
         b->setClickingTogglesState (true);
         b->setRadioGroupId (1001);
@@ -67,8 +71,9 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
         addAndMakeVisible (*b);
     }
 
-    tabLocal.onClick   = [this] { showTab (0); };
-    tabYouTube.onClick = [this] { showTab (1); };
+    tabLocal.onClick    = [this] { showTab (0); };
+    tabYouTube.onClick  = [this] { showTab (1); };
+    tabSettings.onClick = [this] { showTab (2); };
 
     collapseButton.onClick = [this] { setBarVisible (false); };
     expandButton.onClick   = [this] { setBarVisible (true); };
@@ -111,14 +116,51 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
     backButton.onClick = [this] { if (browser != nullptr) browser->goBack(); };
     addAndMakeVisible (backButton);
 
-    searchBox.setTextToShowWhenEmpty (fr ("Rechercher sur YouTube ou coller un lien…"), Theme::textDim);
     searchBox.setSelectAllWhenFocused (true);
     searchBox.onReturnKey = [this] { submitSearch(); };
     addAndMakeVisible (searchBox);
 
+    // --- Onglet Couleurs ---
+    for (auto* s : { &swatchBg, &swatchAccent, &swatchText })
+        addChildComponent (*s);
+
+    swatchBg.onClick     = [this] { selectRole (0); };
+    swatchAccent.onClick = [this] { selectRole (1); };
+    swatchText.onClick   = [this] { selectRole (2); };
+    swatchAccent.setToggleState (true, juce::dontSendNotification);
+
+    presetBW.setButtonText ("Noir et blanc");
+    presetLight.setButtonText ("Clair");
+    presetNight.setButtonText ("Minuit");
+
+    presetBW.onClick = [this]
+    {
+        applyPreset (juce::Colour (0xff000000), juce::Colour (0xffffffff), juce::Colour (0xfff2f2f2));
+    };
+    presetLight.onClick = [this]
+    {
+        applyPreset (juce::Colour (0xfff4f4f5), juce::Colour (0xff111111), juce::Colour (0xff111111));
+    };
+    presetNight.onClick = [this]
+    {
+        applyPreset (juce::Colour (0xff0b1020), juce::Colour (0xff5eb8ff), juce::Colour (0xffe8eefc));
+    };
+
+    for (auto* b : { &presetBW, &presetLight, &presetNight })
+    {
+        b->setMouseCursor (juce::MouseCursor::PointingHandCursor);
+        addChildComponent (*b);
+    }
+
+    addChildComponent (selector);
+    selector.setCurrentColour (roleColour (editingRole), juce::dontSendNotification);
+    selector.addChangeListener (this);
+
+    applyTheme();
+
     // --- Fenêtre redimensionnable dans FL Studio ---
     setResizable (true, true);
-    setResizeLimits (360, 240, 2200, 1400);
+    setResizeLimits (440, 320, 2200, 1400);
     setSize (800, 492);             // vidéo 16:9 de 800 x 450 + barre + ligne de progression
 
     // Recharge la dernière vidéo si le projet en avait une (sans la lancer toute seule)
@@ -137,6 +179,10 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
 
 VideoPlayerEditor::~VideoPlayerEditor()
 {
+    if (saveCountdown > 0)
+        Theme::save();
+
+    selector.removeChangeListener (this);
     stopTimer();
     setLookAndFeel (nullptr);
 }
@@ -144,15 +190,22 @@ VideoPlayerEditor::~VideoPlayerEditor()
 //==============================================================================
 void VideoPlayerEditor::paint (juce::Graphics& g)
 {
-    g.fillAll (Theme::bg);
+    g.fillAll (Theme::bg());
 
     if (barVisible)
     {
-        g.setColour (Theme::bar);
+        g.setColour (Theme::bar());
         g.fillRect (barBounds);
 
-        g.setColour (Theme::panelHi);
+        g.setColour (Theme::panelHi());
         g.fillRect (barBounds.getX(), barBounds.getBottom() - 1, barBounds.getWidth(), 1);
+    }
+
+    if (currentTab == 2)
+    {
+        g.setColour (Theme::textDim());
+        g.setFont (12.0f);
+        g.drawText (fr ("THÈMES"), presetsHeaderBounds, juce::Justification::centredLeft, false);
     }
 
     if (currentTab == 0 && ! videoLoaded)
@@ -166,17 +219,17 @@ void VideoPlayerEditor::paint (juce::Graphics& g)
         juce::Path dashed;
         const float dashes[] = { 6.0f, 6.0f };
         juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
-        g.setColour (Theme::panelHi);
+        g.setColour (Theme::panelHi());
         g.fillPath (dashed);
 
         auto inner = box.toNearestInt();
 
-        g.setColour (Theme::text);
+        g.setColour (Theme::text());
         g.setFont (18.0f);
         g.drawFittedText (fr ("Glisse une vidéo ici"), inner.withTrimmedBottom (inner.getHeight() / 2),
                           juce::Justification::centredBottom, 1);
 
-        g.setColour (Theme::textDim);
+        g.setColour (Theme::textDim());
         g.setFont (14.0f);
 
         const juce::String hint = errorMessage.isNotEmpty()
@@ -194,7 +247,7 @@ void VideoPlayerEditor::resized()
 
     if (! barVisible)
     {
-        // Barre masquée : seulement une fine poignée, tout le reste est pour la vidéo
+        // Barre masquée : seulement une fine poignée, tout le reste est pour le contenu
         barBounds = {};
         expandButton.setBounds (area.removeFromTop (kStripHeight));
     }
@@ -204,8 +257,9 @@ void VideoPlayerEditor::resized()
 
         auto row = barBounds.reduced (6, 0);
 
-        tabLocal.setBounds (row.removeFromLeft (70));
-        tabYouTube.setBounds (row.removeFromLeft (84));
+        tabLocal.setBounds (row.removeFromLeft (62));
+        tabYouTube.setBounds (row.removeFromLeft (80));
+        tabSettings.setBounds (row.removeFromLeft (78));
         row.removeFromLeft (8);
 
         collapseButton.setBounds (row.removeFromRight (26).withSizeKeepingCentre (26, 26));
@@ -219,7 +273,7 @@ void VideoPlayerEditor::resized()
             inner.removeFromLeft (6);
             searchBox.setBounds (inner);
         }
-        else
+        else if (currentTab == 0)
         {
             openButton.setBounds (inner.removeFromRight (76));
             inner.removeFromRight (6);
@@ -235,16 +289,40 @@ void VideoPlayerEditor::resized()
 
     if (browser != nullptr)
         browser->setBounds (area);
+
+    // Onglet Couleurs : à gauche les pastilles et les thèmes, à droite le sélecteur
+    auto panel = area.reduced (14);
+    auto left = panel.removeFromLeft (170);
+
+    swatchBg.setBounds (left.removeFromTop (34));
+    left.removeFromTop (6);
+    swatchAccent.setBounds (left.removeFromTop (34));
+    left.removeFromTop (6);
+    swatchText.setBounds (left.removeFromTop (34));
+    left.removeFromTop (14);
+
+    presetsHeaderBounds = left.removeFromTop (18);
+    presetBW.setBounds (left.removeFromTop (28));
+    left.removeFromTop (6);
+    presetLight.setBounds (left.removeFromTop (28));
+    left.removeFromTop (6);
+    presetNight.setBounds (left.removeFromTop (28));
+
+    panel.removeFromLeft (14);
+    selector.setBounds (panel);
 }
 
 //==============================================================================
 void VideoPlayerEditor::showTab (int tab)
 {
     currentTab = tab;
-    processor.setCurrentTab (tab);
+
+    if (tab != 2)
+        processor.setCurrentTab (tab);
 
     tabLocal.setToggleState (tab == 0, juce::dontSendNotification);
     tabYouTube.setToggleState (tab == 1, juce::dontSendNotification);
+    tabSettings.setToggleState (tab == 2, juce::dontSendNotification);
 
     if (tab == 1)
     {
@@ -254,10 +332,17 @@ void VideoPlayerEditor::showTab (int tab)
         ensureBrowser();
         browser->setVisible (true);
     }
+    else if (tab == 0)
+    {
+        if (browser != nullptr)
+        {
+            browser->pauseMedia();  // et YouTube aussi
+            browser->setVisible (false);
+        }
+    }
     else if (browser != nullptr)
     {
-        browser->pauseMedia();      // et YouTube aussi
-        browser->setVisible (false);
+        browser->setVisible (false);    // l'onglet Couleurs ne coupe pas le son
     }
 
     video.setVisible (tab == 0 && videoLoaded);
@@ -278,20 +363,31 @@ void VideoPlayerEditor::setBarVisible (bool shouldShow)
 
 void VideoPlayerEditor::updateControlsVisibility()
 {
-    const bool bar = barVisible;
-    const bool yt  = (currentTab == 1);
+    const bool bar   = barVisible;
+    const bool local = (currentTab == 0);
+    const bool yt    = (currentTab == 1);
+    const bool st    = (currentTab == 2);
 
     tabLocal.setVisible (bar);
     tabYouTube.setVisible (bar);
+    tabSettings.setVisible (bar);
     collapseButton.setVisible (bar);
     expandButton.setVisible (! bar);
 
     backButton.setVisible (bar && yt);
     searchBox.setVisible (bar && yt);
 
-    openButton.setVisible (bar && ! yt);
-    playButton.setVisible (bar && ! yt);
-    seekBar.setVisible (bar && ! yt && videoLoaded);
+    openButton.setVisible (bar && local);
+    playButton.setVisible (bar && local);
+    seekBar.setVisible (bar && local && videoLoaded);
+
+    swatchBg.setVisible (st);
+    swatchAccent.setVisible (st);
+    swatchText.setVisible (st);
+    selector.setVisible (st);
+    presetBW.setVisible (st);
+    presetLight.setVisible (st);
+    presetNight.setVisible (st);
 }
 
 void VideoPlayerEditor::ensureBrowser()
@@ -332,6 +428,59 @@ void VideoPlayerEditor::submitSearch()
         url = "https://www.youtube.com/results?search_query=" + juce::URL::addEscapeChars (text, true);
 
     browser->goToURL (url);
+}
+
+//==============================================================================
+juce::Colour VideoPlayerEditor::roleColour (int role) const
+{
+    auto& pal = Theme::palette();
+
+    if (role == 0) return pal.baseBg;
+    if (role == 1) return pal.baseAccent;
+    return pal.baseText;
+}
+
+void VideoPlayerEditor::selectRole (int role)
+{
+    editingRole = role;
+    selector.setCurrentColour (roleColour (role), juce::dontSendNotification);
+}
+
+void VideoPlayerEditor::applyPreset (juce::Colour newBg, juce::Colour newAccent, juce::Colour newText)
+{
+    Theme::setColours (newBg, newAccent, newText);
+    Theme::save();
+
+    selector.setCurrentColour (roleColour (editingRole), juce::dontSendNotification);
+    applyTheme();
+}
+
+void VideoPlayerEditor::applyTheme()
+{
+    lnf.refreshColours();
+
+    searchBox.setTextToShowWhenEmpty (fr ("Rechercher sur YouTube ou coller un lien…"), Theme::textDim());
+
+    swatchBg.setSwatchColour (Theme::palette().baseBg);
+    swatchAccent.setSwatchColour (Theme::palette().baseAccent);
+    swatchText.setSwatchColour (Theme::palette().baseText);
+
+    sendLookAndFeelChange();
+    repaint();
+}
+
+void VideoPlayerEditor::changeListenerCallback (juce::ChangeBroadcaster*)
+{
+    // Le sélecteur de couleur a bougé : on applique la couleur à l'élément en cours d'édition
+    const auto c = selector.getCurrentColour();
+    auto& pal = Theme::palette();
+
+    Theme::setColours (editingRole == 0 ? c : pal.baseBg,
+                       editingRole == 1 ? c : pal.baseAccent,
+                       editingRole == 2 ? c : pal.baseText);
+
+    saveCountdown = 20;     // enregistré 1 seconde après le dernier mouvement
+    applyTheme();
 }
 
 //==============================================================================
@@ -406,6 +555,9 @@ void VideoPlayerEditor::filesDropped (const juce::StringArray& files, int, int)
 
 void VideoPlayerEditor::timerCallback()
 {
+    if (saveCountdown > 0 && --saveCountdown == 0)
+        Theme::save();
+
     if (currentTab != 0 || ! videoLoaded)
         return;
 

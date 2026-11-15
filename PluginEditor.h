@@ -27,6 +27,7 @@ public:
 // L'"éditeur" = la fenêtre du plugin (ce que tu vois dans FL Studio).
 class VideoPlayerEditor : public juce::AudioProcessorEditor,
                           public juce::FileDragAndDropTarget,
+                          private juce::ChangeListener,
                           private juce::Timer
 {
 public:
@@ -41,14 +42,21 @@ public:
 
 private:
     void timerCallback() override;
+    void changeListenerCallback (juce::ChangeBroadcaster*) override;
 
-    void showTab (int tab);
+    void showTab (int tab);                 // 0 = vidéo, 1 = YouTube, 2 = couleurs
     void setBarVisible (bool shouldShow);
     void updateControlsVisibility();
     void ensureBrowser();
     void submitSearch();
     void openFileDialog();
     void loadVideo (const juce::File& file, bool autoPlay);
+
+    // Couleurs
+    juce::Colour roleColour (int role) const;
+    void selectRole (int role);
+    void applyPreset (juce::Colour bg, juce::Colour accent, juce::Colour text);
+    void applyTheme();
 
     VideoPlayerProcessor& processor;
     PluginLookAndFeel lnf;      // doit rester déclaré en premier
@@ -58,10 +66,10 @@ private:
     bool barVisible = true;
     juce::String errorMessage;
 
-    juce::Rectangle<int> barBounds, contentArea;
+    juce::Rectangle<int> barBounds, contentArea, presetsHeaderBounds;
 
     // Barre du haut
-    juce::TextButton tabLocal, tabYouTube;
+    juce::TextButton tabLocal, tabYouTube, tabSettings;
     IconButton collapseButton { IconButton::Icon::collapse };   // masque la barre
     IconButton expandButton   { IconButton::Icon::expand };     // la ré-affiche
 
@@ -75,6 +83,17 @@ private:
     IconButton backButton { IconButton::Icon::back };
     juce::TextEditor searchBox;
     std::unique_ptr<YouTubeBrowser> browser;    // créé au premier passage sur l'onglet
+
+    // Onglet "Couleurs"
+    SwatchButton swatchBg     { fr ("Fond") };
+    SwatchButton swatchAccent { "Accent" };
+    SwatchButton swatchText   { "Texte" };
+    juce::ColourSelector selector { juce::ColourSelector::showColourAtTop
+                                    | juce::ColourSelector::showSliders
+                                    | juce::ColourSelector::showColourspace };
+    juce::TextButton presetBW, presetLight, presetNight;
+    int editingRole = 1;        // 0 = fond, 1 = accent, 2 = texte
+    int saveCountdown = 0;      // enregistre les couleurs un instant après le dernier changement
 
     std::unique_ptr<juce::FileChooser> chooser;
 

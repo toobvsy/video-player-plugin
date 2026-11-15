@@ -3,19 +3,99 @@
 #include <juce_gui_basics/juce_gui_basics.h>
 #include <cmath>
 
-// Tout ce qui concerne l'apparence : couleurs, style des boutons, icônes, barre de progression.
-// Pour changer la couleur d'accent (orange par défaut), modifie la ligne "accent" ci-dessous.
+// Tout ce qui concerne l'apparence : couleurs (modifiables depuis l'onglet "Couleurs"),
+// style des boutons, icônes, barre de progression.
 
 namespace Theme
 {
-    inline const juce::Colour bg      { 0xff000000 };   // fond (derrière la vidéo)
-    inline const juce::Colour bar     { 0xff0e0e10 };   // barre du haut
-    inline const juce::Colour panel   { 0xff1f1f23 };   // boutons
-    inline const juce::Colour panelHi { 0xff2c2c32 };   // survol, séparateurs
-    inline const juce::Colour track   { 0xff2c2c32 };   // fond de la barre de progression
-    inline const juce::Colour text    { 0xfff4f4f5 };
-    inline const juce::Colour textDim { 0xff85858d };
-    inline const juce::Colour accent  { 0xffff5a1f };   // orange
+    // Trois couleurs de base choisies par l'utilisateur : fond, accent, texte.
+    // Toutes les autres (barre, boutons, survol...) en sont déduites automatiquement.
+    struct Palette
+    {
+        juce::Colour baseBg     { 0xff000000 };     // par défaut : noir
+        juce::Colour baseAccent { 0xffffffff };     // blanc
+        juce::Colour baseText   { 0xfff2f2f2 };     // blanc légèrement adouci
+
+        juce::Colour bg, bar, panel, panelHi, track, text, textDim, accent;
+
+        Palette() { set (baseBg, baseAccent, baseText); }
+
+        void set (juce::Colour newBg, juce::Colour newAccent, juce::Colour newText)
+        {
+            baseBg = newBg;
+            baseAccent = newAccent;
+            baseText = newText;
+
+            bg      = newBg;
+            bar     = newBg.interpolatedWith (newText, 0.06f);
+            panel   = newBg.interpolatedWith (newText, 0.14f);
+            panelHi = newBg.interpolatedWith (newText, 0.24f);
+            track   = panelHi;
+            text    = newText;
+            textDim = newBg.interpolatedWith (newText, 0.55f);
+            accent  = newAccent;
+        }
+    };
+
+    inline Palette& palette()
+    {
+        static Palette instance;
+        return instance;
+    }
+
+    inline juce::Colour bg()      { return palette().bg; }
+    inline juce::Colour bar()     { return palette().bar; }
+    inline juce::Colour panel()   { return palette().panel; }
+    inline juce::Colour panelHi() { return palette().panelHi; }
+    inline juce::Colour track()   { return palette().track; }
+    inline juce::Colour text()    { return palette().text; }
+    inline juce::Colour textDim() { return palette().textDim; }
+    inline juce::Colour accent()  { return palette().accent; }
+
+    // Couleur lisible posée sur l'accent (ex. l'icône du bouton lecture)
+    inline juce::Colour onAccent()
+    {
+        return palette().accent.getPerceivedBrightness() > 0.6f ? juce::Colours::black
+                                                                : juce::Colours::white;
+    }
+
+    inline void setColours (juce::Colour newBg, juce::Colour newAccent, juce::Colour newText)
+    {
+        palette().set (newBg, newAccent, newText);
+    }
+
+    // Les réglages sont gardés dans un petit fichier, pour tous les projets :
+    // ~/Library/Application Support/MonStudio/VideoPlayer-couleurs.xml
+    inline juce::File settingsFile()
+    {
+        return juce::File::getSpecialLocation (juce::File::userApplicationDataDirectory)
+                   .getChildFile ("Application Support/MonStudio/VideoPlayer-couleurs.xml");
+    }
+
+    inline void load()
+    {
+        if (auto xml = juce::parseXML (settingsFile()))
+        {
+            if (xml->hasTagName ("Couleurs"))
+            {
+                setColours (juce::Colour::fromString (xml->getStringAttribute ("fond",   "ff000000")),
+                            juce::Colour::fromString (xml->getStringAttribute ("accent", "ffffffff")),
+                            juce::Colour::fromString (xml->getStringAttribute ("texte",  "fff2f2f2")));
+            }
+        }
+    }
+
+    inline void save()
+    {
+        juce::XmlElement xml ("Couleurs");
+        xml.setAttribute ("fond",   palette().baseBg.toString());
+        xml.setAttribute ("accent", palette().baseAccent.toString());
+        xml.setAttribute ("texte",  palette().baseText.toString());
+
+        const auto file = settingsFile();
+        file.getParentDirectory().createDirectory();
+        xml.writeTo (file);
+    }
 }
 
 // Les textes avec accents doivent être convertis explicitement depuis l'UTF-8,
@@ -31,15 +111,32 @@ class PluginLookAndFeel : public juce::LookAndFeel_V4
 public:
     PluginLookAndFeel()
     {
-        setColour (juce::TextEditor::backgroundColourId,       Theme::panel);
-        setColour (juce::TextEditor::textColourId,             Theme::text);
-        setColour (juce::TextEditor::outlineColourId,          juce::Colours::transparentBlack);
-        setColour (juce::TextEditor::focusedOutlineColourId,   Theme::accent);
-        setColour (juce::TextEditor::highlightColourId,        Theme::accent.withAlpha (0.45f));
-        setColour (juce::CaretComponent::caretColourId,        Theme::accent);
+        refreshColours();
     }
 
-    // Onglets (boutons à bascule) : pas de fond, juste un trait de couleur sous l'onglet actif.
+    // À rappeler chaque fois que les couleurs changent
+    void refreshColours()
+    {
+        setColour (juce::TextEditor::backgroundColourId,       Theme::panel());
+        setColour (juce::TextEditor::textColourId,             Theme::text());
+        setColour (juce::TextEditor::outlineColourId,          juce::Colours::transparentBlack);
+        setColour (juce::TextEditor::focusedOutlineColourId,   Theme::accent());
+        setColour (juce::TextEditor::highlightColourId,        Theme::accent().withAlpha (0.35f));
+        setColour (juce::TextEditor::highlightedTextColourId,  Theme::text());
+        setColour (juce::CaretComponent::caretColourId,        Theme::accent());
+
+        // Sélecteur de couleur (onglet "Couleurs")
+        setColour (juce::ColourSelector::backgroundColourId,   Theme::bg());
+        setColour (juce::ColourSelector::labelTextColourId,    Theme::text());
+        setColour (juce::Slider::thumbColourId,                Theme::accent());
+        setColour (juce::Slider::trackColourId,                Theme::panelHi());
+        setColour (juce::Slider::backgroundColourId,           Theme::panel());
+        setColour (juce::Slider::textBoxTextColourId,          Theme::text());
+        setColour (juce::Slider::textBoxBackgroundColourId,    Theme::panel());
+        setColour (juce::Slider::textBoxOutlineColourId,       juce::Colours::transparentBlack);
+    }
+
+    // Onglets (boutons à bascule) : pas de fond, juste un trait sous l'onglet actif.
     // Autres boutons : petite pastille arrondie.
     void drawButtonBackground (juce::Graphics& g, juce::Button& b, const juce::Colour&,
                                bool highlighted, bool down) override
@@ -50,15 +147,15 @@ public:
         {
             if (b.getToggleState())
             {
-                g.setColour (Theme::accent);
+                g.setColour (Theme::accent());
                 g.fillRoundedRectangle (r.getX() + 8.0f, r.getBottom() - 3.0f, r.getWidth() - 16.0f, 2.0f, 1.0f);
             }
         }
         else
         {
-            auto base = Theme::panel;
-            if (down)             base = base.brighter (0.25f);
-            else if (highlighted) base = base.brighter (0.12f);
+            auto base = Theme::panel();
+            if (down)             base = base.interpolatedWith (Theme::text(), 0.25f);
+            else if (highlighted) base = base.interpolatedWith (Theme::text(), 0.12f);
 
             g.setColour (base);
             g.fillRoundedRectangle (r.reduced (0.5f), r.getHeight() * 0.5f);
@@ -69,9 +166,9 @@ public:
     {
         const bool isTab = b.getClickingTogglesState();
 
-        auto col = Theme::text;
+        auto col = Theme::text();
         if (isTab && ! b.getToggleState() && ! highlighted)
-            col = Theme::textDim;
+            col = Theme::textDim();
 
         g.setFont (13.0f);
         g.setColour (col);
@@ -109,7 +206,7 @@ public:
         if (icon == Icon::expand)
         {
             // Barre masquée : juste une petite poignée discrète en haut de la fenêtre
-            g.setColour (highlighted ? Theme::text : Theme::textDim.withAlpha (0.6f));
+            g.setColour (highlighted ? Theme::text() : Theme::textDim().withAlpha (0.8f));
             g.fillRoundedRectangle (c.x - 18.0f, c.y - 1.5f, 36.0f, 3.0f, 1.5f);
             return;
         }
@@ -118,17 +215,20 @@ public:
 
         if (isPlayIcon)
         {
-            g.setColour (down ? Theme::accent.brighter (0.2f)
-                              : highlighted ? Theme::accent.brighter (0.1f) : Theme::accent);
+            auto fill = Theme::accent();
+            if (down)             fill = fill.interpolatedWith (Theme::bg(), 0.3f);
+            else if (highlighted) fill = fill.interpolatedWith (Theme::bg(), 0.15f);
+
+            g.setColour (fill);
             g.fillEllipse (r);
         }
         else if (highlighted || down)
         {
-            g.setColour (Theme::panelHi.withAlpha (down ? 1.0f : 0.8f));
+            g.setColour (Theme::panelHi().withAlpha (down ? 1.0f : 0.8f));
             g.fillRoundedRectangle (r, 8.0f);
         }
 
-        g.setColour (isPlayIcon ? juce::Colours::white : Theme::text);
+        g.setColour (isPlayIcon ? Theme::onAccent() : Theme::text());
 
         const float s = juce::jmin (r.getWidth(), r.getHeight()) * 0.28f;
         const juce::PathStrokeType stroke (2.2f, juce::PathStrokeType::curved,
@@ -199,13 +299,13 @@ public:
     {
         auto r = getLocalBounds().toFloat();
         const float h = isMouseOverOrDragging() ? 6.0f : 3.0f;
-        auto track = r.withSizeKeepingCentre (r.getWidth(), h);
+        auto trackArea = r.withSizeKeepingCentre (r.getWidth(), h);
 
-        g.setColour (Theme::track);
-        g.fillRect (track);
+        g.setColour (Theme::track());
+        g.fillRect (trackArea);
 
-        g.setColour (Theme::accent);
-        g.fillRect (track.withWidth (track.getWidth() * (float) progress));
+        g.setColour (Theme::accent());
+        g.fillRect (trackArea.withWidth (trackArea.getWidth() * (float) progress));
     }
 
     void mouseDown (const juce::MouseEvent& e) override  { seekTo (e); }
@@ -221,4 +321,44 @@ private:
     }
 
     double progress = 0.0;
+};
+
+//==============================================================================
+// Pastille de couleur cliquable (onglet "Couleurs") : montre la couleur actuelle d'un élément.
+class SwatchButton : public juce::Button
+{
+public:
+    explicit SwatchButton (const juce::String& label) : juce::Button (label)
+    {
+        setClickingTogglesState (true);
+        setRadioGroupId (1002);
+        setMouseCursor (juce::MouseCursor::PointingHandCursor);
+    }
+
+    void setSwatchColour (juce::Colour c)
+    {
+        colour = c;
+        repaint();
+    }
+
+    void paintButton (juce::Graphics& g, bool highlighted, bool) override
+    {
+        auto r = getLocalBounds().toFloat().reduced (1.5f);
+
+        g.setColour (colour);
+        g.fillRoundedRectangle (r, 8.0f);
+
+        // Contour : visible quelle que soit la couleur choisie
+        g.setColour (getToggleState() ? Theme::text()
+                                      : (highlighted ? Theme::textDim() : Theme::panelHi()));
+        g.drawRoundedRectangle (r, 8.0f, getToggleState() ? 2.0f : 1.0f);
+
+        g.setColour (colour.getPerceivedBrightness() > 0.5f ? juce::Colours::black : juce::Colours::white);
+        g.setFont (13.0f);
+        g.drawText (getButtonText(), r.toNearestInt().reduced (12, 0),
+                    juce::Justification::centredLeft, false);
+    }
+
+private:
+    juce::Colour colour { juce::Colours::black };
 };
