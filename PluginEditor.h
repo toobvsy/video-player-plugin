@@ -43,6 +43,7 @@ private:
     void timerCallback() override;
 
     void showTab (int tab);
+    void setBarVisible (bool shouldShow);
     void updateControlsVisibility();
     void ensureBrowser();
     void submitSearch();
@@ -54,23 +55,24 @@ private:
 
     int currentTab = 0;
     bool videoLoaded = false;
+    bool barVisible = true;
     juce::String errorMessage;
+
+    juce::Rectangle<int> barBounds, contentArea;
 
     // Barre du haut
     juce::TextButton tabLocal, tabYouTube;
+    IconButton collapseButton { IconButton::Icon::collapse };   // masque la barre
+    IconButton expandButton   { IconButton::Icon::expand };     // la ré-affiche
 
     // Onglet "vidéo locale"
     juce::VideoComponent video { false };   // false = pas de contrôles natifs, on fait les nôtres
     juce::TextButton openButton;
     IconButton playButton { IconButton::Icon::play };
-    juce::Slider positionSlider, volumeSlider;
-    juce::Label timeLabel;
+    SeekBar seekBar;
 
     // Onglet YouTube
-    IconButton backButton    { IconButton::Icon::back };
-    IconButton forwardButton { IconButton::Icon::forward };
-    IconButton reloadButton  { IconButton::Icon::reload };
-    IconButton homeButton    { IconButton::Icon::home };
+    IconButton backButton { IconButton::Icon::back };
     juce::TextEditor searchBox;
     std::unique_ptr<YouTubeBrowser> browser;    // créé au premier passage sur l'onglet
 

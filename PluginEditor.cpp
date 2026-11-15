@@ -2,8 +2,9 @@
 
 namespace
 {
-    constexpr int kTopBarHeight    = 52;
-    constexpr int kBottomBarHeight = 56;
+    constexpr int kBarHeight   = 34;    // barre du haut
+    constexpr int kStripHeight = 10;    // poignée quand la barre est masquée
+    constexpr int kSeekHeight  = 10;    // ligne de progression en bas
 
     const char* const kYouTubeHome = "https://www.youtube.com/";
 
@@ -11,12 +12,6 @@ namespace
     const char* const kUserAgent =
         "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/605.1.15 "
         "(KHTML, like Gecko) Version/17.5 Safari/605.1.15";
-
-    juce::String formatTime (double seconds)
-    {
-        const int total = (int) juce::jmax (0.0, seconds);
-        return juce::String::formatted ("%d:%02d", total / 60, total % 60);
-    }
 
     bool isVideoFile (const juce::String& path)
     {
@@ -61,7 +56,7 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
     setLookAndFeel (&lnf);
 
     // --- Onglets ---
-    tabLocal.setButtonText (fr ("Vidéo locale"));
+    tabLocal.setButtonText (fr ("Vidéo"));
     tabYouTube.setButtonText ("YouTube");
 
     for (auto* b : { &tabLocal, &tabYouTube })
@@ -75,10 +70,15 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
     tabLocal.onClick   = [this] { showTab (0); };
     tabYouTube.onClick = [this] { showTab (1); };
 
+    collapseButton.onClick = [this] { setBarVisible (false); };
+    expandButton.onClick   = [this] { setBarVisible (true); };
+    addAndMakeVisible (collapseButton);
+    addChildComponent (expandButton);
+
     // --- Onglet vidéo locale ---
     addChildComponent (video);      // caché tant qu'aucune vidéo n'est chargée
 
-    openButton.setButtonText (fr ("Ouvrir un fichier"));
+    openButton.setButtonText ("Ouvrir");
     openButton.setMouseCursor (juce::MouseCursor::PointingHandCursor);
     openButton.onClick = [this] { openFileDialog(); };
     addAndMakeVisible (openButton);
@@ -98,39 +98,18 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
     };
     addAndMakeVisible (playButton);
 
-    positionSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    positionSlider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-    positionSlider.setRange (0.0, 1.0);
-    positionSlider.onValueChange = [this]
+    seekBar.onSeek = [this] (double proportion)
     {
-        // Uniquement quand l'utilisateur fait glisser le curseur à la souris
-        if (positionSlider.isMouseButtonDown())
-            video.setPlayPosition (positionSlider.getValue());
-    };
-    addAndMakeVisible (positionSlider);
+        const double duration = video.getVideoDuration();
 
-    volumeSlider.setSliderStyle (juce::Slider::LinearHorizontal);
-    volumeSlider.setTextBoxStyle (juce::Slider::NoTextBox, true, 0, 0);
-    volumeSlider.setRange (0.0, 1.0);
-    volumeSlider.setValue (0.7, juce::dontSendNotification);
-    volumeSlider.onValueChange = [this]
-    {
-        video.setAudioVolume ((float) volumeSlider.getValue());
+        if (duration > 0.0)
+            video.setPlayPosition (proportion * duration);
     };
-    addAndMakeVisible (volumeSlider);
-
-    timeLabel.setJustificationType (juce::Justification::centredRight);
-    timeLabel.setText ("0:00 / 0:00", juce::dontSendNotification);
-    addAndMakeVisible (timeLabel);
+    addChildComponent (seekBar);
 
     // --- Onglet YouTube ---
-    backButton.onClick    = [this] { if (browser != nullptr) browser->goBack(); };
-    forwardButton.onClick = [this] { if (browser != nullptr) browser->goForward(); };
-    reloadButton.onClick  = [this] { if (browser != nullptr) browser->refresh(); };
-    homeButton.onClick    = [this] { if (browser != nullptr) browser->goToURL (kYouTubeHome); };
-
-    for (auto* b : { &backButton, &forwardButton, &reloadButton, &homeButton })
-        addAndMakeVisible (*b);
+    backButton.onClick = [this] { if (browser != nullptr) browser->goBack(); };
+    addAndMakeVisible (backButton);
 
     searchBox.setTextToShowWhenEmpty (fr ("Rechercher sur YouTube ou coller un lien…"), Theme::textDim);
     searchBox.setSelectAllWhenFocused (true);
@@ -139,8 +118,8 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
 
     // --- Fenêtre redimensionnable dans FL Studio ---
     setResizable (true, true);
-    setResizeLimits (520, 340, 2200, 1400);
-    setSize (960, 600);
+    setResizeLimits (360, 240, 2200, 1400);
+    setSize (800, 492);             // vidéo 16:9 de 800 x 450 + barre + ligne de progression
 
     // Recharge la dernière vidéo si le projet en avait une (sans la lancer toute seule)
     const juce::String savedPath = processor.getVideoPath();
@@ -153,7 +132,7 @@ VideoPlayerEditor::VideoPlayerEditor (VideoPlayerProcessor& p)
 
     showTab (processor.getCurrentTab() == 1 ? 1 : 0);
 
-    startTimerHz (10);
+    startTimerHz (20);
 }
 
 VideoPlayerEditor::~VideoPlayerEditor()
@@ -167,27 +146,34 @@ void VideoPlayerEditor::paint (juce::Graphics& g)
 {
     g.fillAll (Theme::bg);
 
-    g.setColour (Theme::bar);
-    g.fillRect (0, 0, getWidth(), kTopBarHeight);
+    if (barVisible)
+    {
+        g.setColour (Theme::bar);
+        g.fillRect (barBounds);
+
+        g.setColour (Theme::panelHi);
+        g.fillRect (barBounds.getX(), barBounds.getBottom() - 1, barBounds.getWidth(), 1);
+    }
 
     if (currentTab == 0 && ! videoLoaded)
     {
-        auto area = getLocalBounds().withTrimmedTop (kTopBarHeight).withTrimmedBottom (kBottomBarHeight);
+        auto box = contentArea.toFloat().withSizeKeepingCentre (juce::jmin (440.0f, (float) contentArea.getWidth() - 40.0f),
+                                                                juce::jmin (200.0f, (float) contentArea.getHeight() - 40.0f));
 
         // Cadre en pointillés façon "zone de dépôt"
-        auto box = area.toFloat().withSizeKeepingCentre (juce::jmin (480.0f, area.getWidth() - 40.0f),
-                                                         juce::jmin (220.0f, area.getHeight() - 40.0f));
-        g.setColour (Theme::panelHi);
         juce::Path outline;
         outline.addRoundedRectangle (box, 16.0f);
         juce::Path dashed;
         const float dashes[] = { 6.0f, 6.0f };
         juce::PathStrokeType (1.5f).createDashedStroke (dashed, outline, dashes, 2);
+        g.setColour (Theme::panelHi);
         g.fillPath (dashed);
+
+        auto inner = box.toNearestInt();
 
         g.setColour (Theme::text);
         g.setFont (18.0f);
-        g.drawFittedText (fr ("Glisse une vidéo ici"), box.toNearestInt().withTrimmedBottom ((int) box.getHeight() / 2),
+        g.drawFittedText (fr ("Glisse une vidéo ici"), inner.withTrimmedBottom (inner.getHeight() / 2),
                           juce::Justification::centredBottom, 1);
 
         g.setColour (Theme::textDim);
@@ -195,9 +181,9 @@ void VideoPlayerEditor::paint (juce::Graphics& g)
 
         const juce::String hint = errorMessage.isNotEmpty()
                                       ? errorMessage
-                                      : fr ("ou clique sur « Ouvrir un fichier »\n(.mp4, .mov, .m4v)");
+                                      : fr ("ou clique sur « Ouvrir »\n(.mp4, .mov, .m4v)");
 
-        g.drawFittedText (hint, box.toNearestInt().withTrimmedTop ((int) box.getHeight() / 2 + 8).reduced (16, 0),
+        g.drawFittedText (hint, inner.withTrimmedTop (inner.getHeight() / 2 + 8).reduced (16, 0),
                           juce::Justification::centredTop, 3);
     }
 }
@@ -205,43 +191,50 @@ void VideoPlayerEditor::paint (juce::Graphics& g)
 void VideoPlayerEditor::resized()
 {
     auto area = getLocalBounds();
-    auto top = area.removeFromTop (kTopBarHeight).reduced (12, 10);
 
-    tabLocal.setBounds (top.removeFromLeft (120));
-    top.removeFromLeft (6);
-    tabYouTube.setBounds (top.removeFromLeft (100));
-    top.removeFromLeft (14);
-
-    if (currentTab == 1)
+    if (! barVisible)
     {
-        backButton.setBounds    (top.removeFromLeft (32));
-        top.removeFromLeft (2);
-        forwardButton.setBounds (top.removeFromLeft (32));
-        top.removeFromLeft (2);
-        reloadButton.setBounds  (top.removeFromLeft (32));
-        top.removeFromLeft (2);
-        homeButton.setBounds    (top.removeFromLeft (32));
-        top.removeFromLeft (10);
-        searchBox.setBounds (top);
-
-        if (browser != nullptr)
-            browser->setBounds (area);
+        // Barre masquée : seulement une fine poignée, tout le reste est pour la vidéo
+        barBounds = {};
+        expandButton.setBounds (area.removeFromTop (kStripHeight));
     }
     else
     {
-        openButton.setBounds (top.removeFromRight (150));
+        barBounds = area.removeFromTop (kBarHeight);
 
-        auto bottom = area.removeFromBottom (kBottomBarHeight).reduced (14, 10);
-        playButton.setBounds (bottom.removeFromLeft (36));
-        bottom.removeFromLeft (12);
-        volumeSlider.setBounds (bottom.removeFromRight (110));
-        bottom.removeFromRight (12);
-        timeLabel.setBounds (bottom.removeFromRight (100));
-        bottom.removeFromRight (8);
-        positionSlider.setBounds (bottom);
+        auto row = barBounds.reduced (6, 0);
 
-        video.setBounds (area);
+        tabLocal.setBounds (row.removeFromLeft (70));
+        tabYouTube.setBounds (row.removeFromLeft (84));
+        row.removeFromLeft (8);
+
+        collapseButton.setBounds (row.removeFromRight (26).withSizeKeepingCentre (26, 26));
+        row.removeFromRight (6);
+
+        auto inner = row.reduced (0, 4);
+
+        if (currentTab == 1)
+        {
+            backButton.setBounds (inner.removeFromLeft (26));
+            inner.removeFromLeft (6);
+            searchBox.setBounds (inner);
+        }
+        else
+        {
+            openButton.setBounds (inner.removeFromRight (76));
+            inner.removeFromRight (6);
+            playButton.setBounds (inner.removeFromRight (26));
+
+            if (videoLoaded)
+                seekBar.setBounds (area.removeFromBottom (kSeekHeight));
+        }
     }
+
+    contentArea = area;
+    video.setBounds (area);
+
+    if (browser != nullptr)
+        browser->setBounds (area);
 }
 
 //==============================================================================
@@ -274,21 +267,31 @@ void VideoPlayerEditor::showTab (int tab)
     repaint();
 }
 
+void VideoPlayerEditor::setBarVisible (bool shouldShow)
+{
+    barVisible = shouldShow;
+
+    updateControlsVisibility();
+    resized();
+    repaint();
+}
+
 void VideoPlayerEditor::updateControlsVisibility()
 {
-    const bool yt = (currentTab == 1);
+    const bool bar = barVisible;
+    const bool yt  = (currentTab == 1);
 
-    backButton.setVisible (yt);
-    forwardButton.setVisible (yt);
-    reloadButton.setVisible (yt);
-    homeButton.setVisible (yt);
-    searchBox.setVisible (yt);
+    tabLocal.setVisible (bar);
+    tabYouTube.setVisible (bar);
+    collapseButton.setVisible (bar);
+    expandButton.setVisible (! bar);
 
-    openButton.setVisible (! yt);
-    playButton.setVisible (! yt);
-    positionSlider.setVisible (! yt);
-    volumeSlider.setVisible (! yt);
-    timeLabel.setVisible (! yt);
+    backButton.setVisible (bar && yt);
+    searchBox.setVisible (bar && yt);
+
+    openButton.setVisible (bar && ! yt);
+    playButton.setVisible (bar && ! yt);
+    seekBar.setVisible (bar && ! yt && videoLoaded);
 }
 
 void VideoPlayerEditor::ensureBrowser()
@@ -362,7 +365,6 @@ void VideoPlayerEditor::loadVideo (const juce::File& file, bool autoPlay)
         videoLoaded = true;
         processor.setVideoPath (file.getFullPathName());
 
-        video.setAudioVolume ((float) volumeSlider.getValue());
         video.setVisible (currentTab == 0);
 
         if (autoPlay)
@@ -375,6 +377,8 @@ void VideoPlayerEditor::loadVideo (const juce::File& file, bool autoPlay)
         errorMessage = fr ("Impossible de lire cette vidéo : ") + result.getErrorMessage();
     }
 
+    updateControlsVisibility();
+    resized();
     repaint();
 }
 
@@ -408,15 +412,7 @@ void VideoPlayerEditor::timerCallback()
     playButton.setIcon (video.isPlaying() ? IconButton::Icon::pause : IconButton::Icon::play);
 
     const double duration = video.getVideoDuration();
+
     if (duration > 0.0)
-    {
-        if (positionSlider.getMaximum() != duration)
-            positionSlider.setRange (0.0, duration);
-
-        if (! positionSlider.isMouseButtonDown())
-            positionSlider.setValue (video.getPlayPosition(), juce::dontSendNotification);
-
-        timeLabel.setText (formatTime (video.getPlayPosition()) + " / " + formatTime (duration),
-                           juce::dontSendNotification);
-    }
+        seekBar.setProgress (video.getPlayPosition() / duration);
 }
